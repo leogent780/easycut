@@ -1,0 +1,17 @@
+# 육아/라이프스타일형 — 상단 후킹 타이틀 + 하단 추가 설명 캡션 + 쇼핑/제품 태그 슬롯.
+hook_title:
+  position: top
+  banner_color: "#FFFFFF"
+  text_color: "#000000"
+  lines: 2
+secondary_caption:
+  enabled: true
+  source: description
+  position: bottom
+source_attribution:
+  enabled: false
+shopping_tag:
+  enabled: true  # 실제 제품/링크는 사용자의 홍보 단계에서 채워짐 — 지금은 슬롯만
+comment_overlay:
+  enabled: false
+karaoke_caption_style: default

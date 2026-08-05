@@ -1,0 +1,15 @@
+# 예능/아이돌 가십형 — 상단 2줄 배너 후킹 타이틀 + AI 생성 댓글 스크린샷 오버레이. 2차 캡션/출처 없음.
+hook_title:
+  position: top
+  banner_color: "#00FF88"
+  text_color: "#FFFFFF"
+  lines: 2
+secondary_caption:
+  enabled: false
+source_attribution:
+  enabled: false
+shopping_tag:
+  enabled: false
+comment_overlay:
+  enabled: true  # 텍스트는 comment_generator.py가 생성 — 실제 계정 스크래핑 안 함, 특정인 비방 문구 금지 가드레일 적용
+karaoke_caption_style: default

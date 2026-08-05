@@ -1,0 +1,17 @@
+# 국내 재클립형 — 상단 후킹 타이틀 + 하단 중앙 "출처: X" 워터마크만. 2차 캡션/쇼핑태그/댓글오버레이 없음.
+hook_title:
+  position: top
+  banner_color: "#FFE600"
+  text_color: "#000000"
+  lines: 2
+secondary_caption:
+  enabled: false
+source_attribution:
+  enabled: true
+  text_template: "출처: {name}"
+  position: bottom_center
+shopping_tag:
+  enabled: false
+comment_overlay:
+  enabled: false
+karaoke_caption_style: default

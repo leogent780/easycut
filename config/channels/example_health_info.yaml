@@ -1,0 +1,21 @@
+# 예시 채널 설정 — 실제 채널을 추가하려면 이 파일을 복사해서
+# config/channels/<실제채널이름>.yaml 로 저장하고 아래 값을 채우세요.
+#
+# 이 예시는 건강정보 하이라이트컷 전략(전략 1)의 채널입니다. 얼굴추적 팬크롭을 사용하므로
+# layout_config_ref가 필요 없습니다(게임클립처럼 고정영역 크롭 캘리브레이션이 필요 없음).
+
+source_strategy: longform_highlight_cut
+format_template: simple_hook_top
+niche_description: >
+  건강/의학 전문가 강연, 다큐, 인터뷰 롱폼 영상에서
+  누구나 궁금해할 만한 핵심 정보/꿀팁 구간을 찾아 쇼츠로 만드는 채널.
+search_keywords:
+  - "건강 꿀팁 명의"
+  - "다이어트 전문가 인터뷰"
+  - "건강 상식 강연"
+gcp_project_ref: shorts-factory-health-01
+min_duration_s: 600
+max_duration_s: 3600
+target_clip_count: 10
+daily_publish_count: 1
+needs_translation: false

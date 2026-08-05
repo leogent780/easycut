@@ -1,0 +1,21 @@
+# 예시 채널 설정 — 실제 채널을 추가하려면 이 파일을 복사해서
+# config/channels/<실제채널이름>.yaml 로 저장하고 아래 값을 채우세요.
+#
+# 이 예시는 게임클립 하이라이트컷 전략(전략 1)의 채널입니다.
+
+source_strategy: longform_highlight_cut
+format_template: simple_hook_top
+niche_description: >
+  인기 스트리머의 게임 실황(GTA5, 마인크래프트 등) 롱폼 VOD에서
+  가장 재미있는/놀라운/웃긴 순간을 찾아 쇼츠로 만드는 채널.
+search_keywords:
+  - "GTA5 하이라이트"
+  - "마인크래프트 스트리머 명장면"
+  - "스트리머 레전드 모먼트"
+layout_config_ref: example_streamer_facecam
+gcp_project_ref: shorts-factory-gaming-01
+min_duration_s: 600      # 10분 이상 롱폼만 (짧은 영상은 하이라이트 추출 의미가 적음)
+max_duration_s: 3600     # 60분 이하
+target_clip_count: 10
+daily_publish_count: 1
+needs_translation: false

@@ -1,0 +1,38 @@
+[project]
+name = "shorts-factory"
+version = "0.1.0"
+description = "Local automation daemon that discovers proven-viral YouTube source videos, cuts/renders them into Shorts, and uploads on a schedule."
+requires-python = ">=3.11"
+dependencies = [
+    "yt-dlp>=2024.1.0",
+    "faster-whisper>=1.0.0",
+    "anthropic>=0.40.0",
+    "google-api-python-client>=2.100.0",
+    "google-auth>=2.23.0",
+    "google-auth-oauthlib>=1.2.0",
+    "apscheduler>=3.10.0",
+    "sqlalchemy>=2.0.0",
+    "keyring>=24.0.0",
+    "cryptography>=42.0.0",
+    "pyyaml>=6.0",
+    "typer>=0.12.0",
+    "playwright>=1.40.0",
+    "pydantic>=2.5.0",
+]
+
+[project.optional-dependencies]
+dashboard = ["fastapi>=0.110.0", "jinja2>=3.1.0", "uvicorn>=0.27.0"]
+dev = ["pytest>=8.0.0", "pytest-mock>=3.12.0", "pillow>=10.0.0"]
+
+[project.scripts]
+shorts-factory = "shorts_factory.cli:app"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["shorts_factory*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

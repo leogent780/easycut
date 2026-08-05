@@ -1,0 +1,15 @@
+# 게임클립형 기본 포맷 — 상단 후킹 타이틀 + 카라오케 자막만. 2차 캡션/출처/쇼핑태그/댓글오버레이 없음.
+hook_title:
+  position: top
+  banner_color: "#FFE600"
+  text_color: "#000000"
+  lines: 2
+secondary_caption:
+  enabled: false
+source_attribution:
+  enabled: false
+shopping_tag:
+  enabled: false
+comment_overlay:
+  enabled: false
+karaoke_caption_style: default

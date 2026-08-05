@@ -1,0 +1,19 @@
+# 해외 바이럴 번역/더빙형 — 상단 배너 후킹 타이틀 + 하단 번역 캡션 + 원 계정 핸들 출처 표기.
+hook_title:
+  position: top
+  banner_color: "#FFE600"
+  text_color: "#000000"
+  lines: 2
+secondary_caption:
+  enabled: true
+  source: translation
+  position: bottom
+source_attribution:
+  enabled: true
+  text_template: "@{handle}"
+  position: bottom_right
+shopping_tag:
+  enabled: false
+comment_overlay:
+  enabled: false
+karaoke_caption_style: default
