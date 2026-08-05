@@ -1,7 +1,6 @@
-"""CLI entrypoint (Phase 1-2 control surface — a local dashboard comes later in Phase 3).
-
-Commands operate on the same SQLite state DB the (future) scheduler daemon reads/writes,
-so the CLI and the daemon stay decoupled — no IPC beyond the shared DB file.
+"""CLI entrypoint. `dashboard` launches the Phase 3 web UI (shorts_factory/dashboard/app.py)
+for users who'd rather click buttons in a browser than type commands — both read/write the
+same SQLite state DB, so the CLI and the dashboard stay interchangeable and decoupled.
 """
 
 from __future__ import annotations
@@ -110,6 +109,19 @@ def status(channel: str | None = typer.Option(None, "--channel", help="생략하
                 f"{row.name:30s} status={row.status:14s} strategy={row.source_strategy:24s} "
                 f"last_run={row.last_run_at or '-'}"
             )
+
+
+@app.command("dashboard")
+def dashboard(
+    host: str = typer.Option("127.0.0.1", "--host"),
+    port: int = typer.Option(8000, "--port"),
+):
+    """Launch the local web dashboard at http://127.0.0.1:8000 — channel list, pause/resume,
+    run-now, job/clip history, and a manual-upload form, all click-driven (no commands to type)."""
+    from shorts_factory.dashboard.app import run_dashboard
+
+    typer.echo(f"대시보드 실행 중: http://{host}:{port}  (끄려면 Ctrl+C)")
+    run_dashboard(host=host, port=port)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ additions that plug into the same shared render/upload/state modules (see plan Â
 
 from __future__ import annotations
 
+import datetime
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
@@ -27,7 +28,10 @@ def run_cycle(session: Session, channel: Channel, channel_config: ChannelConfig)
     if channel_config.source_strategy == SourceStrategy.LONGFORM_HIGHLIGHT_CUT:
         from shorts_factory.pipeline import longform_highlight_cut
 
-        return longform_highlight_cut.run(session, channel, channel_config)
+        result = longform_highlight_cut.run(session, channel, channel_config)
+        channel.last_run_at = datetime.datetime.now(datetime.timezone.utc)
+        session.commit()
+        return result
 
     raise NotImplementedError(
         f"source_strategy={channel_config.source_strategy.value} is not implemented yet "

@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}{{ channel.name }} · 쇼츠 팩토리{% endblock %}
+{% block content %}
+  <a class="back-link" href="/">← 전체 채널</a>
+
+  <div class="page-head">
+    <h1>{{ channel.name }}</h1>
+    <span class="badge {{ channel.status_tone }}">{{ channel.status_label }}</span>
+  </div>
+
+  <section class="panel">
+    <h2>직접 만든 영상 업로드</h2>
+    <p class="hint">
+      채널을 일시정지한 뒤, 네가 직접 편집한 영상을 여기서 바로 유튜브에 올릴 수 있어.
+      자동 제작 과정을 거치지 않고 곧바로 게시돼.
+    </p>
+    <form method="post" action="/channels/{{ channel.name }}/manual-upload" enctype="multipart/form-data" class="upload-form">
+      <label>
+        <span>영상 제목</span>
+        <input type="text" name="title" placeholder="예: 이거 실화냐? #Shorts" required>
+      </label>
+      <label>
+        <span>영상 파일</span>
+        <input type="file" name="video" accept="video/mp4,video/*" required>
+      </label>
+      <button class="btn primary" type="submit">유튜브에 업로드</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>클립 이력</h2>
+    {% if not clips %}
+      <p class="hint">아직 만들어진 클립이 없어요.</p>
+    {% else %}
+      <table class="table">
+        <thead><tr><th>제목</th><th>상태</th><th>업로드 시각</th><th></th></tr></thead>
+        <tbody>
+          {% for c in clips %}
+          <tr>
+            <td>{{ c.hook_title or "-" }}</td>
+            <td><span class="badge {{ c.status_tone }}">{{ c.status_label }}</span></td>
+            <td>{% if c.uploaded_at %}{{ c.uploaded_at.strftime('%Y-%m-%d %H:%M') }}{% else %}-{% endif %}</td>
+            <td>{% if c.youtube_url %}<a href="{{ c.youtube_url }}" target="_blank" rel="noopener">보기 ↗</a>{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </section>
+
+  <section class="panel">
+    <h2>실행 이력</h2>
+    {% if not jobs %}
+      <p class="hint">아직 실행된 적이 없어요.</p>
+    {% else %}
+      <table class="table">
+        <thead><tr><th>날짜</th><th>상태</th><th>시작</th><th>종료</th><th>오류</th></tr></thead>
+        <tbody>
+          {% for j in jobs %}
+          <tr>
+            <td>{{ j.cycle_date }}</td>
+            <td>{{ j.status }}</td>
+            <td>{% if j.started_at %}{{ j.started_at.strftime('%H:%M:%S') }}{% else %}-{% endif %}</td>
+            <td>{% if j.finished_at %}{{ j.finished_at.strftime('%H:%M:%S') }}{% else %}-{% endif %}</td>
+            <td class="err">{{ j.error or "-" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% endif %}
+  </section>
+{% endblock %}

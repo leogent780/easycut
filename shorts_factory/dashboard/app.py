@@ -1,0 +1,253 @@
+"""Local web dashboard (Phase 3): channel list with pause/resume/run-now, job/clip history,
+and a manual-upload override — the GUI control surface promised in the plan for a user who
+doesn't want to operate this via CLI commands.
+
+Single-user, local-only tool: runs via `shorts-factory dashboard` and is meant to be opened
+at http://127.0.0.1:8000 in a browser on the same machine. In-process state (the `_running`
+set) is fine at this scale — there is exactly one server process, no multi-worker deployment.
+"""
+
+from __future__ import annotations
+
+import datetime
+import os
+import shutil
+import threading
+import uuid
+from pathlib import Path
+
+from fastapi import FastAPI, Form, Request, UploadFile
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from shorts_factory import config as config_module
+from shorts_factory.integrations import youtube_api
+from shorts_factory.pipeline.base import run_cycle
+from shorts_factory.state import (
+    AuditLevel,
+    Channel,
+    ChannelStatus,
+    Clip,
+    Job,
+    JobStatus,
+    UploadStatus,
+    create_job,
+    finish_job,
+    get_channel_by_name,
+    get_engine,
+    log_audit,
+)
+
+BASE_DIR = Path(__file__).parent
+app = FastAPI(title="쇼츠 팩토리")
+app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+_running_channels: set[str] = set()
+
+
+def _data_dir() -> Path:
+    return Path(os.environ.get("SHORTS_FACTORY_DATA_DIR", "./data"))
+
+
+def _db_path() -> Path:
+    return _data_dir() / "shorts_factory.db"
+
+
+def _get_session() -> Session:
+    return Session(get_engine(_db_path()))
+
+
+def _get_or_create_channel(session: Session, name: str, channel_config) -> Channel:
+    channel = get_channel_by_name(session, name)
+    if channel is None:
+        channel = Channel(
+            name=name,
+            source_strategy=channel_config.source_strategy.value,
+            format_template=channel_config.format_template,
+            niche_keywords=channel_config.search_keywords,
+            layout_config_ref=channel_config.layout_config_ref,
+            gcp_project_ref=channel_config.gcp_project_ref,
+        )
+        session.add(channel)
+        session.commit()
+    return channel
+
+
+STATUS_LABELS = {
+    ChannelStatus.ACTIVE.value: ("가동 중", "ok"),
+    ChannelStatus.PAUSED.value: ("일시정지", "muted"),
+    ChannelStatus.NEEDS_REAUTH.value: ("재인증 필요", "danger"),
+}
+UPLOAD_STATUS_LABELS = {
+    UploadStatus.PENDING.value: ("제작 중", "muted"),
+    UploadStatus.PENDING_UPLOAD.value: ("업로드 대기(재고)", "info"),
+    UploadStatus.UPLOADED.value: ("업로드 완료", "ok"),
+    UploadStatus.FAILED.value: ("실패", "danger"),
+}
+
+
+@app.get("/")
+def index(request: Request):
+    with _get_session() as session:
+        rows = []
+        for name in config_module.list_channel_names():
+            cfg = config_module.load_channel_config(name)
+            channel = _get_or_create_channel(session, name, cfg)
+            pending_count = (
+                session.scalar(
+                    select(func.count(Clip.id))
+                    .join(Job)
+                    .where(Job.channel_id == channel.id, Clip.upload_status == UploadStatus.PENDING_UPLOAD.value)
+                )
+                or 0
+            )
+            label, tone = STATUS_LABELS.get(channel.status, (channel.status, "muted"))
+            rows.append(
+                {
+                    "name": channel.name,
+                    "status_label": label,
+                    "status_tone": tone,
+                    "status_raw": channel.status,
+                    "strategy": channel.source_strategy,
+                    "niche": cfg.niche_description.strip(),
+                    "last_run_at": channel.last_run_at,
+                    "pending_count": pending_count,
+                    "is_running": name in _running_channels,
+                }
+            )
+    return templates.TemplateResponse(request, "index.html", {"channels": rows})
+
+
+@app.post("/channels/{name}/pause")
+def pause_channel(name: str):
+    with _get_session() as session:
+        channel = get_channel_by_name(session, name)
+        if channel:
+            channel.status = ChannelStatus.PAUSED.value
+            session.commit()
+    return RedirectResponse("/", status_code=303)
+
+
+@app.post("/channels/{name}/resume")
+def resume_channel(name: str):
+    with _get_session() as session:
+        channel = get_channel_by_name(session, name)
+        if channel:
+            channel.status = ChannelStatus.ACTIVE.value
+            session.commit()
+    return RedirectResponse("/", status_code=303)
+
+
+def _run_cycle_in_background(name: str) -> None:
+    try:
+        cfg = config_module.load_channel_config(name)
+        with _get_session() as session:
+            channel = _get_or_create_channel(session, name, cfg)
+            run_cycle(session, channel, cfg)
+    except Exception as exc:  # a bad cycle must not crash the server process
+        with _get_session() as session:
+            channel = get_channel_by_name(session, name)
+            log_audit(session, None, "dashboard", f"run-now failed for '{name}': {exc}", AuditLevel.ERROR)
+            session.commit()
+    finally:
+        _running_channels.discard(name)
+
+
+@app.post("/channels/{name}/run-now")
+def run_now(name: str):
+    if name not in _running_channels:
+        _running_channels.add(name)
+        threading.Thread(target=_run_cycle_in_background, args=(name,), daemon=True).start()
+    return RedirectResponse("/", status_code=303)
+
+
+@app.get("/channels/{name}")
+def channel_detail(request: Request, name: str):
+    with _get_session() as session:
+        channel = get_channel_by_name(session, name)
+        if channel is None:
+            cfg = config_module.load_channel_config(name)
+            channel = _get_or_create_channel(session, name, cfg)
+
+        jobs = list(
+            session.scalars(select(Job).where(Job.channel_id == channel.id).order_by(Job.id.desc()).limit(20))
+        )
+        job_ids = [j.id for j in jobs]
+        clips = (
+            list(session.scalars(select(Clip).where(Clip.job_id.in_(job_ids)).order_by(Clip.id.desc())))
+            if job_ids
+            else []
+        )
+        clip_rows = [
+            {
+                "id": c.id,
+                "hook_title": c.hook_title,
+                "status_label": UPLOAD_STATUS_LABELS.get(c.upload_status, (c.upload_status, "muted"))[0],
+                "status_tone": UPLOAD_STATUS_LABELS.get(c.upload_status, (c.upload_status, "muted"))[1],
+                "youtube_url": (
+                    f"https://youtube.com/shorts/{c.youtube_video_id_uploaded}"
+                    if c.youtube_video_id_uploaded
+                    else None
+                ),
+                "uploaded_at": c.uploaded_at,
+            }
+            for c in clips
+        ]
+        label, tone = STATUS_LABELS.get(channel.status, (channel.status, "muted"))
+        channel_row = {"name": channel.name, "status_label": label, "status_tone": tone}
+
+    return templates.TemplateResponse(
+        request,
+        "channel_detail.html",
+        {"channel": channel_row, "jobs": jobs, "clips": clip_rows},
+    )
+
+
+@app.post("/channels/{name}/manual-upload")
+async def manual_upload(name: str, title: str = Form(...), video: UploadFile = None):
+    """The user's own produced video, uploaded straight to YouTube — bypasses the whole
+    discover/render pipeline entirely (see plan: pause + manual override is a first-class flow)."""
+    with _get_session() as session:
+        channel = get_channel_by_name(session, name)
+        job = create_job(session, channel)
+        session.commit()
+
+        try:
+            scratch_dir = _data_dir() / "scratch" / "manual" / str(job.id)
+            scratch_dir.mkdir(parents=True, exist_ok=True)
+            dest_path = scratch_dir / (video.filename or f"{uuid.uuid4()}.mp4")
+            with dest_path.open("wb") as f:
+                shutil.copyfileobj(video.file, f)
+
+            service = youtube_api.get_service(channel.name)
+            video_id = youtube_api.upload_short(service, str(dest_path), title=title, description=title)
+
+            clip = Clip(
+                job_id=job.id,
+                hook_title=title,
+                rendered_path=str(dest_path),
+                upload_status=UploadStatus.UPLOADED.value,
+                youtube_video_id_uploaded=video_id,
+                uploaded_at=datetime.datetime.now(datetime.timezone.utc),
+            )
+            session.add(clip)
+            log_audit(session, job, "manual_upload", f"manually uploaded -> {video_id}")
+            finish_job(session, job, JobStatus.COMPLETED)
+        except Exception as exc:
+            log_audit(session, job, "manual_upload", f"manual upload failed: {exc}", AuditLevel.ERROR)
+            finish_job(session, job, JobStatus.FAILED, error=str(exc))
+            if "invalid_grant" in str(exc).lower():
+                channel.status = ChannelStatus.NEEDS_REAUTH.value
+        session.commit()
+
+    return RedirectResponse(f"/channels/{name}", status_code=303)
+
+
+def run_dashboard(host: str = "127.0.0.1", port: int = 8000) -> None:
+    import uvicorn
+
+    uvicorn.run(app, host=host, port=port)
