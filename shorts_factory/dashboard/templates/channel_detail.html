@@ -5,7 +5,7 @@
 
   <div class="page-head">
     <h1>{{ channel.name }}</h1>
-    <span class="badge {{ channel.status_tone }}">{{ channel.status_label }}</span>
+    <span class="badge {{ channel.status_tone }}"><i class="dot"></i>{{ channel.status_label }}</span>
   </div>
 
   <section class="panel">
@@ -38,7 +38,7 @@
           {% for c in clips %}
           <tr>
             <td>{{ c.hook_title or "-" }}</td>
-            <td><span class="badge {{ c.status_tone }}">{{ c.status_label }}</span></td>
+            <td><span class="badge {{ c.status_tone }}"><i class="dot"></i>{{ c.status_label }}</span></td>
             <td>{% if c.uploaded_at %}{{ c.uploaded_at.strftime('%Y-%m-%d %H:%M') }}{% else %}-{% endif %}</td>
             <td>{% if c.youtube_url %}<a href="{{ c.youtube_url }}" target="_blank" rel="noopener">보기 ↗</a>{% endif %}</td>
           </tr>

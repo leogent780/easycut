@@ -17,10 +17,10 @@
 
   <div class="channel-grid">
     {% for ch in channels %}
-    <article class="card">
+    <article class="card card--{{ ch.status_tone }}">
       <div class="card-head">
         <h2><a href="/channels/{{ ch.name }}">{{ ch.name }}</a></h2>
-        <span class="badge {{ ch.status_tone }}">{{ ch.status_label }}</span>
+        <span class="badge {{ ch.status_tone }}"><i class="dot"></i>{{ ch.status_label }}</span>
       </div>
       <p class="niche">{{ ch.niche }}</p>
       <dl class="meta">
@@ -30,30 +30,31 @@
       </dl>
 
       <div class="card-actions">
-        {% if ch.status_raw == "paused" %}
-          <form method="post" action="/channels/{{ ch.name }}/resume">
-            <button class="btn primary" type="submit">재개</button>
-          </form>
-        {% else %}
-          <form method="post" action="/channels/{{ ch.name }}/pause">
-            <button class="btn" type="submit">일시정지</button>
-          </form>
-        {% endif %}
-
         <form method="post" action="/channels/{{ ch.name }}/run-now">
-          <button class="btn accent" type="submit" {% if ch.is_running %}disabled{% endif %}>
+          <button class="btn primary" type="submit" {% if ch.is_running %}disabled{% endif %}>
             {% if ch.is_running %}실행 중…{% else %}지금 실행{% endif %}
           </button>
         </form>
 
-        <a class="btn ghost" href="/channels/{{ ch.name }}">상세보기</a>
+        {% if ch.status_raw == "paused" %}
+          <form method="post" action="/channels/{{ ch.name }}/resume">
+            <button class="btn secondary" type="submit">재개</button>
+          </form>
+        {% else %}
+          <form method="post" action="/channels/{{ ch.name }}/pause">
+            <button class="btn secondary" type="submit">일시정지</button>
+          </form>
+        {% endif %}
+
+        <a class="btn ghost" href="/channels/{{ ch.name }}">상세보기 →</a>
       </div>
     </article>
     {% endfor %}
   </div>
 
-  <p class="foot-hint">
-    "지금 실행"은 실제로 유튜브에서 영상을 찾아 다운로드·편집·업로드하는 전체 과정을 한 번 돌립니다 —
-    몇 분 정도 걸릴 수 있어요. 진행 상태는 페이지를 새로고침하면 확인할 수 있습니다.
-  </p>
+  <div class="note">
+    <strong>참고.</strong> "지금 실행"은 실제로 유튜브에서 영상을 찾아 다운로드·편집·업로드하는
+    전체 과정을 한 번 돌립니다 — 몇 분 정도 걸릴 수 있어요. 진행 상태는 페이지를 새로고침하면
+    확인할 수 있습니다.
+  </div>
 {% endblock %}
