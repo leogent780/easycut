@@ -199,12 +199,44 @@ def channel_detail(request: Request, name: str):
         ]
         label, tone = STATUS_LABELS.get(channel.status, (channel.status, "muted"))
         channel_row = {"name": channel.name, "status_label": label, "status_tone": tone}
+        current_format = channel.format_template
+
+    format_options = [
+        {
+            "key": key,
+            "label": info["label"],
+            "description": info["description"],
+            "preview_url": f"/static/format_previews/{key}.jpg",
+            "selected": key == current_format,
+        }
+        for key, info in config_module.FORMAT_TEMPLATE_INFO.items()
+        if key in config_module.list_format_template_names()
+    ]
 
     return templates.TemplateResponse(
         request,
         "channel_detail.html",
-        {"channel": channel_row, "jobs": jobs, "clips": clip_rows},
+        {"channel": channel_row, "jobs": jobs, "clips": clip_rows, "format_options": format_options},
     )
+
+
+@app.post("/channels/{name}/format")
+def set_format(name: str, format_template: str = Form(...)):
+    """Persist the user's chosen '숏폼 디자인' (format template) for this channel. Writes
+    through to the channel's YAML config (the pipeline's actual source of truth each cycle —
+    see longform_highlight_cut.run) and mirrors it into the DB row so the dashboard reflects
+    the change immediately without waiting for the next run to re-register the channel."""
+    if format_template not in config_module.list_format_template_names():
+        return RedirectResponse(f"/channels/{name}", status_code=303)
+
+    config_module.update_channel_format_template(name, format_template)
+
+    with _get_session() as session:
+        channel = get_channel_by_name(session, name)
+        if channel:
+            channel.format_template = format_template
+            session.commit()
+    return RedirectResponse(f"/channels/{name}", status_code=303)
 
 
 @app.post("/channels/{name}/manual-upload")

@@ -9,6 +9,27 @@
   </div>
 
   <section class="panel">
+    <h2>숏폼 디자인</h2>
+    <p class="hint">이 채널에서 만들 쇼츠의 화면 스타일을 골라줘. 클릭하고 "이 스타일로 저장"을 누르면 다음 제작부터 바로 적용돼.</p>
+    <form method="post" action="/channels/{{ channel.name }}/format" class="format-picker">
+      <div class="format-grid">
+        {% for f in format_options %}
+        <label class="format-option {% if f.selected %}is-selected{% endif %}">
+          <input type="radio" name="format_template" value="{{ f.key }}" {% if f.selected %}checked{% endif %}>
+          {% if f.selected %}<span class="format-option-current">현재 적용중</span>{% endif %}
+          <img src="{{ f.preview_url }}" alt="{{ f.label }} 미리보기">
+          <div class="format-option-body">
+            <span class="format-option-label">{{ f.label }}</span>
+            <span class="format-option-desc">{{ f.description }}</span>
+          </div>
+        </label>
+        {% endfor %}
+      </div>
+      <button class="btn primary" type="submit">이 스타일로 저장</button>
+    </form>
+  </section>
+
+  <section class="panel">
     <h2>직접 만든 영상 업로드</h2>
     <p class="hint">
       채널을 일시정지한 뒤, 네가 직접 편집한 영상을 여기서 바로 유튜브에 올릴 수 있어.
