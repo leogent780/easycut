@@ -67,6 +67,9 @@ DEFAULT_SPEED_FACTOR = 1.0  # no video/audio speed-up by default — only silenc
 SILENCE_NOISE_DB = "-30dB"
 SILENCE_MIN_DURATION_S = 0.15
 LENGTH_OVERAGE_RETRY_THRESHOLD = 1.15  # re-request a shorter script if TTS runs >15% over target
+MAX_COMPRESSION_RETRIES = 2  # up to 2 extra re-prompts (3 attempts total) if narration keeps overrunning
+COMPRESSION_RETRY_TARGET_SHRINK = 0.85  # each retry's requested target shrinks by this factor per attempt
+MAX_SLOWMO_STRETCH = 1.5  # cover narration overrun with up to 1.5x-slower footage before freezing the rest
 
 
 @dataclass
@@ -290,30 +293,49 @@ def _dub_segment(
     narration_path = scratch_dir / "narration.wav"
     tts_client.synthesize(" ".join(script_ko), narration_path, provider=tts_provider)
     narration_duration = _audio_duration(narration_path)
-    if narration_duration > source_duration * LENGTH_OVERAGE_RETRY_THRESHOLD:
+    compress_attempt = 0
+    while (
+        narration_duration > source_duration * LENGTH_OVERAGE_RETRY_THRESHOLD
+        and compress_attempt < MAX_COMPRESSION_RETRIES
+    ):
+        compress_attempt += 1
         warnings.append(
-            f"1차 대본 낭독 시 {narration_duration:.1f}초로 원본({source_duration:.1f}초)보다 길어 압축 재요청함"
+            f"{compress_attempt}차 대본 낭독 시 {narration_duration:.1f}초로 원본({source_duration:.1f}초)보다 "
+            f"길어 압축 재요청함"
         )
+        # Ask for progressively less than the raw source duration each retry — asking again for
+        # exactly source_duration tends to produce the same overrun repeatedly, since Gemini's
+        # sense of "compressed enough" doesn't shrink much on a flat repeat of the same target.
+        tighter_target = source_duration * (COMPRESSION_RETRY_TARGET_SHRINK ** compress_attempt)
         compress_hint = (
             (tone_hint + " " if tone_hint else "")
-            + f"TTS로 읽었을 때 반드시 {source_duration:.1f}초 이내(가능하면 그보다 짧게)로 압축해줘."
+            + f"TTS로 읽었을 때 반드시 {tighter_target:.1f}초 이내로 압축해줘. 이전 시도는 여전히 너무 길었습니다."
         )
-        script_result = gemini_client.generate_script_from_video(video_file_uri, source_duration, tone_hint=compress_hint)
+        script_result = gemini_client.generate_script_from_video(video_file_uri, tighter_target, tone_hint=compress_hint)
         script_ko = script_result["script_ko"]
         hook_title = script_result["hook_title"]
         tts_client.synthesize(" ".join(script_ko), narration_path, provider=tts_provider)
         narration_duration = _audio_duration(narration_path)
 
-    # If the narration STILL runs past the available footage, extend the video by freezing its
-    # last frame (ffmpeg tpad) instead of letting the mux silently truncate the closing line —
-    # a frozen last frame during the sign-off reads far better than the video just stopping
-    # mid-sentence.
+    # If the narration STILL runs past the available footage after retrying compression, cover
+    # the gap with slow-motion playback of the source footage first (up to MAX_SLOWMO_STRETCH),
+    # and only fall back to freezing the last frame (ffmpeg tpad) for whatever gap remains beyond
+    # that — a multi-second dead freeze reads as broken, but a modest slow-motion stretch reads
+    # as a deliberate dramatic beat, and is far less likely to be needed at the full duration.
     extension_s = max(0.0, narration_duration - source_duration)
-    extend_suffix = f",tpad=stop_mode=clone:stop_duration={extension_s:.3f}" if extension_s > 0 else ""
+    extend_suffix = ""
     if extension_s > 0:
+        max_slowmo_duration = source_duration * MAX_SLOWMO_STRETCH
+        slowmo_target_duration = min(narration_duration, max_slowmo_duration)
+        stretch_factor = slowmo_target_duration / source_duration
+        freeze_s = max(0.0, narration_duration - slowmo_target_duration)
+        extend_suffix = f",setpts=PTS*{stretch_factor:.4f}"
+        if freeze_s > 0:
+            extend_suffix += f",tpad=stop_mode=clone:stop_duration={freeze_s:.3f}"
         warnings.append(
             f"나레이션({narration_duration:.1f}초)이 소스 영상({source_duration:.1f}초)보다 길어 "
-            f"마지막 프레임을 {extension_s:.1f}초 정지시켜 늘림"
+            f"영상을 {stretch_factor:.2f}배 슬로우모션으로 늘리고"
+            + (f", 남는 {freeze_s:.1f}초는 마지막 프레임을 정지시켜 늘림" if freeze_s > 0 else "")
         )
 
     banner_path = scratch_dir / "banner.png"
