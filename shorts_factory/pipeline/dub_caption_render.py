@@ -2,14 +2,18 @@
 
 1. Hook banner — fixed 1080x353px, #000000 background, Pretendard Black, white default text
    with one emphasized word/phrase in #FEF501, real typed text (not AI-generated letterforms
-   in an image). Exact spec the user gave when this was first validated by hand.
-2. Short caption chunks — black text with a thick white outline, sized/positioned to match a
-   real high-performing reference short the user provided (see
-   samples/xhs_dish_brush_ko_dub_v2/README.md for the pixel-measurement this was derived from).
+   in an image). Exact spec the user gave when this was first validated by hand. Font size is
+   auto-fit per render (not a fixed constant) so the banner text always fills close to the full
+   banner width regardless of how long the hook title happens to be — matching a real reference
+   screenshot the user provided where the copy visually fills almost the entire frame.
+2. Short caption chunks — Do Hyeon (a bold, vertically-elongated Korean display font used
+   throughout Korean broadcast/variety-show captions), white fill with a thin black outline,
+   sized/positioned to match a detailed style spec the user gave (see module-level constants
+   below) after finding the earlier Pretendard-Black-based captions too thick/UI-like.
 
 Both reuse the same Playwright-screenshot-a-transparent-page technique as
 pipeline/overlay_render.py rather than sharing its renderer directly, because these two overlays
-have fixed, hand-tuned specs (exact px box, exact stroke width) rather than the configurable
+have fixed, hand-tuned specs (exact px box, exact stroke ratio) rather than the configurable
 per-format-template slots overlay_render.py serves.
 """
 
@@ -21,11 +25,31 @@ CANVAS_WIDTH = 1080
 CANVAS_HEIGHT = 1920
 BANNER_HEIGHT = 353
 
+# Hook banner auto-fit: render once at a trial size, measure actual rendered width, then scale
+# to hit this fraction of the banner width — matches a reference screenshot where the copy (two
+# lines, one in white / one in yellow) spans ~85-87% of the frame edge-to-edge.
+BANNER_TARGET_WIDTH_FRACTION = 0.86
+BANNER_TRIAL_FONT_SIZE = 80
+BANNER_MIN_FONT_SIZE = 40
+BANNER_MAX_FONT_SIZE = 120
+
+# Caption chunk style: white fill / thin black outline, tight letter-spacing, sized so the
+# outline reads as a deliberate thin stroke (~6-7% of font-size) rather than a thick UI-style
+# border — per a detailed spec the user gave describing 2000s~2010s Korean variety-show captions.
+CAPTION_FONT_SIZE = 76
+CAPTION_STROKE_RATIO = 0.065
+CAPTION_LETTER_SPACING_PX = -2
+
 _FONT_CSS = """
 @font-face {{
   font-family: "Pretendard Black";
-  src: url("file://{font_path}") format("opentype");
+  src: url("file://{pretendard_path}") format("opentype");
   font-weight: 900;
+}}
+@font-face {{
+  font-family: "Do Hyeon";
+  src: url("file://{dohyeon_path}") format("truetype");
+  font-weight: 400;
 }}
 """
 
@@ -38,14 +62,14 @@ html, body {{ width: {width}px; height: {height}px; background: #000000; }}
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
 }}
 .titlebox .line {{
-  font-family: "Pretendard Black", sans-serif; font-weight: 900; font-size: 62px; line-height: 1;
+  font-family: "Pretendard Black", sans-serif; font-weight: 900; font-size: {font_size}px; line-height: 1;
   color: #ffffff; white-space: nowrap; text-align: center;
 }}
 .titlebox .yellow {{ color: #fef501; }}
 </style></head><body>
 <div class="titlebox">
-  <div class="line">{line1}</div>
-  <div class="line">{line2_html}</div>
+  <div class="line" id="line1">{line1}</div>
+  <div class="line" id="line2">{line2_html}</div>
 </div>
 </body></html>"""
 
@@ -59,9 +83,10 @@ html, body {{ width: {width}px; height: {height}px; background: transparent; }}
   gap: 10px; padding: 0 60px;
 }}
 .capbox .line {{
-  font-family: "Pretendard Black", sans-serif; font-weight: 900; font-size: 62px; line-height: 1.3;
-  color: #000000; text-align: center; white-space: nowrap;
-  -webkit-text-stroke: 13px #ffffff; paint-order: stroke fill;
+  font-family: "Do Hyeon", sans-serif; font-weight: 400; font-size: {font_size}px; line-height: 1.3;
+  letter-spacing: {letter_spacing}px;
+  color: #ffffff; text-align: center; white-space: nowrap;
+  -webkit-text-stroke: {stroke_width}px #000000; paint-order: stroke fill;
 }}
 </style></head><body>
 <div class="capbox"><div class="line">{text}</div></div>
@@ -73,20 +98,32 @@ PRETENDARD_BLACK_URL = (
     "https://raw.githubusercontent.com/orioncactus/pretendard/main/packages/pretendard/"
     "dist/public/static/Pretendard-Black.otf"
 )
+# Do Hyeon (도현체) — free Google Font, the de facto standard Korean variety-show caption
+# typeface: bold, vertically-elongated, tight-set. Served from Google's static font CDN.
+DOHYEON_URL = "https://fonts.gstatic.com/s/dohyeon/v21/TwMN-I8CRRU2zM86HFE3.ttf"
 
 
 def ensure_pretendard_font(cache_dir: str | Path) -> Path:
-    """Download+cache the exact webfont file the banner/caption spec requires (real typed
-    text, not an AI-generated image of letterforms). `raw.githubusercontent.com` is reachable
-    even from network-restricted environments where e.g. jsdelivr's CDN is blocked.
+    """Download+cache the exact webfont file the banner spec requires (real typed text, not
+    an AI-generated image of letterforms). `raw.githubusercontent.com` is reachable even from
+    network-restricted environments where e.g. jsdelivr's CDN is blocked.
     """
+    return _ensure_font(cache_dir, "Pretendard-Black.otf", PRETENDARD_BLACK_URL)
+
+
+def ensure_dohyeon_font(cache_dir: str | Path) -> Path:
+    """Download+cache Do Hyeon for the short caption chunks."""
+    return _ensure_font(cache_dir, "DoHyeon-Regular.ttf", DOHYEON_URL)
+
+
+def _ensure_font(cache_dir: str | Path, filename: str, url: str) -> Path:
     cache_dir = Path(cache_dir)
     cache_dir.mkdir(parents=True, exist_ok=True)
-    font_path = cache_dir / "Pretendard-Black.otf"
+    font_path = cache_dir / filename
     if not font_path.exists():
         import httpx
 
-        resp = httpx.get(PRETENDARD_BLACK_URL, timeout=30.0, follow_redirects=True)
+        resp = httpx.get(url, timeout=30.0, follow_redirects=True)
         resp.raise_for_status()
         font_path.write_bytes(resp.content)
     return font_path
@@ -102,48 +139,87 @@ def render_hook_banner(
     line1: str,
     line2: str,
     emphasis_word: str | None,
-    font_path: str | Path,
+    pretendard_font_path: str | Path,
     output_path: str | Path,
     chromium_executable_path: str | None = None,
 ) -> Path:
     """Render the fixed 1080x353 hook banner. `emphasis_word` (if it appears verbatim in
     line1 or line2) is colored #FEF501; everything else stays white.
+
+    Font size is auto-fit: render once at a trial size, measure the longer line's actual
+    rendered width, then scale so it hits BANNER_TARGET_WIDTH_FRACTION of the banner width
+    (clamped to [BANNER_MIN_FONT_SIZE, BANNER_MAX_FONT_SIZE]) and re-render at that size.
     """
     from playwright.sync_api import sync_playwright
 
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    html = _BANNER_HTML_TEMPLATE.format(
-        font_css=_FONT_CSS.format(font_path=Path(font_path).resolve()),
-        width=CANVAS_WIDTH,
-        height=BANNER_HEIGHT,
-        line1=_wrap_emphasis(line1, emphasis_word),
-        line2_html=_wrap_emphasis(line2, emphasis_word),
+    line1_html = _wrap_emphasis(line1, emphasis_word)
+    line2_html = _wrap_emphasis(line2, emphasis_word)
+    font_css = _FONT_CSS.format(
+        pretendard_path=Path(pretendard_font_path).resolve(),
+        dohyeon_path=Path(pretendard_font_path).resolve(),  # unused by the banner template
     )
-    _screenshot(html, CANVAS_WIDTH, BANNER_HEIGHT, output_path, chromium_executable_path)
+
+    with sync_playwright() as p:
+        launch_kwargs = {"executable_path": chromium_executable_path} if chromium_executable_path else {}
+        browser = p.chromium.launch(**launch_kwargs)
+        page = browser.new_page(viewport={"width": CANVAS_WIDTH, "height": BANNER_HEIGHT})
+
+        trial_html = _BANNER_HTML_TEMPLATE.format(
+            font_css=font_css, width=CANVAS_WIDTH, height=BANNER_HEIGHT,
+            font_size=BANNER_TRIAL_FONT_SIZE, line1=line1_html, line2_html=line2_html,
+        )
+        page.set_content(trial_html)
+        page.wait_for_timeout(100)
+        widths = page.eval_on_selector_all(
+            "#line1, #line2", "els => els.map(e => e.getBoundingClientRect().width)"
+        )
+        measured_width = max(widths)
+
+        target_width = CANVAS_WIDTH * BANNER_TARGET_WIDTH_FRACTION
+        scale = target_width / measured_width if measured_width > 0 else 1.0
+        final_font_size = max(
+            BANNER_MIN_FONT_SIZE, min(BANNER_MAX_FONT_SIZE, round(BANNER_TRIAL_FONT_SIZE * scale))
+        )
+
+        final_html = _BANNER_HTML_TEMPLATE.format(
+            font_css=font_css, width=CANVAS_WIDTH, height=BANNER_HEIGHT,
+            font_size=final_font_size, line1=line1_html, line2_html=line2_html,
+        )
+        page.set_content(final_html)
+        page.wait_for_timeout(100)
+        page.screenshot(path=str(output_path), omit_background=False)
+        browser.close()
     return output_path
 
 
 def render_caption_chunk(
     text: str,
-    font_path: str | Path,
+    dohyeon_font_path: str | Path,
     output_path: str | Path,
     caption_top: int = DEFAULT_CAPTION_TOP,
     chromium_executable_path: str | None = None,
 ) -> Path:
-    """Render one short caption chunk as a full-canvas transparent PNG (black text / white
-    outline), positioned at `caption_top`.
+    """Render one short caption chunk as a full-canvas transparent PNG (Do Hyeon, white fill /
+    thin black outline), positioned at `caption_top`.
     """
-    from playwright.sync_api import sync_playwright
-
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    font_css = _FONT_CSS.format(
+        pretendard_path=Path(dohyeon_font_path).resolve(),  # unused by the caption template
+        dohyeon_path=Path(dohyeon_font_path).resolve(),
+    )
+    stroke_width = round(CAPTION_FONT_SIZE * CAPTION_STROKE_RATIO, 1)
     html = _CAPTION_HTML_TEMPLATE.format(
-        font_css=_FONT_CSS.format(font_path=Path(font_path).resolve()),
+        font_css=font_css,
         width=CANVAS_WIDTH,
         height=CANVAS_HEIGHT,
         caption_top=caption_top,
         text=text,
+        font_size=CAPTION_FONT_SIZE,
+        stroke_width=stroke_width,
+        letter_spacing=CAPTION_LETTER_SPACING_PX,
     )
     _screenshot(html, CANVAS_WIDTH, CANVAS_HEIGHT, output_path, chromium_executable_path, transparent=True)
     return output_path

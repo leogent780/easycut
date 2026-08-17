@@ -41,7 +41,11 @@ from shorts_factory.pipeline import dub_caption_render, dub_timing, subtitle_cro
 
 CANVAS_WIDTH = 1080
 CANVAS_HEIGHT = 1920
-DEFAULT_SPEED_FACTOR = 1.3
+DEFAULT_SPEED_FACTOR = 1.0  # no video/audio speed-up by default — only silence gaps are trimmed;
+# an earlier default of 1.3 (from an early single-video test where the user explicitly asked for
+# a faster pace) was carried over inappropriately into this general pipeline and made unrelated
+# runs visibly "fast-forwarded" with a much shorter total runtime than the source content
+# warranted. Pass speed_factor explicitly when a faster pace really is wanted.
 SILENCE_NOISE_DB = "-30dB"
 SILENCE_MIN_DURATION_S = 0.15
 LENGTH_OVERAGE_RETRY_THRESHOLD = 1.15  # re-request a shorter script if TTS runs >15% over target
@@ -131,7 +135,8 @@ def _real_segment_durations(scratch_dir: Path, count: int) -> list[float]:
 
 def run_manual(
     reference_video_path: str | Path,
-    hook_font_path: str | Path,
+    pretendard_font_path: str | Path,
+    dohyeon_font_path: str | Path,
     output_path: str | Path,
     tone_hint: str | None = None,
     speed_factor: float = DEFAULT_SPEED_FACTOR,
@@ -185,7 +190,7 @@ def run_manual(
         banner_path = scratch_dir / "banner.png"
         dub_caption_render.render_hook_banner(
             hook_title["line1"], hook_title["line2"], hook_title.get("emphasis_word"),
-            hook_font_path, banner_path, chromium_executable_path=chromium_executable_path,
+            pretendard_font_path, banner_path, chromium_executable_path=chromium_executable_path,
         )
         base_composite = scratch_dir / "base_composite.mp4"
         _run_ffmpeg([
@@ -240,7 +245,7 @@ def run_manual(
         for i, chunk in enumerate(chunks, start=1):
             chunk_png = scratch_dir / f"chunk_{i:03d}.png"
             dub_caption_render.render_caption_chunk(
-                chunk.text, hook_font_path, chunk_png, chromium_executable_path=chromium_executable_path
+                chunk.text, dohyeon_font_path, chunk_png, chromium_executable_path=chromium_executable_path
             )
             overlay_inputs += ["-i", str(chunk_png)]
             out_label = f"v{i}"

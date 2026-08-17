@@ -195,8 +195,15 @@ def _parse_json_response(text: str) -> dict[str, Any]:
 SCRIPT_SYSTEM_PROMPT = (
     "당신은 쇼츠 영상 편집자입니다. 주어진 영상을 실제로 보고 다음을 수행하세요: "
     "1) 영상 속 음성/화면 자막을 한 글자도 빠짐없이 정확하게 받아쓰기 (transcript_original), "
-    "2) 그 내용을 쇼츠 나레이션에 맞는 자연스러운 한국어 구어체 대본으로 재구성 및 번역 "
-    "(script_ko, 문장 배열, TTS로 읽었을 때 반드시 target_duration_s 근처(±10%)에 들어오도록 압축), "
+    "2) 그 내용을 쇼츠 나레이션에 맞는 한국어 구어체 대본으로 재구성 및 번역 (script_ko, 문장 배열). "
+    "말투는 정중체(-습니다/-해요)가 아니라, 화제가 된 이야기를 옆에서 전해주듯 하는 반말/전언체로 써야 "
+    "합니다 — 문장을 '~다는데', '~라는데', '~라고', '~하는 거', '~해 버렸다는 거' 같은 어미로 끝내고, "
+    "제품/기능을 하나씩 드러낼 때 '이게 말도 안 되는 게', '근데 진짜 충격적인 포인트는' 같은 전환구로 "
+    "임팩트 있게 이어가세요. 영상에 제품이 여러 개 등장하면 각 제품마다 이 흐름(등장 → 반전 포인트 → "
+    "핵심 기능)을 짧게 반복하되 자연스럽게 이어붙이고, 대본은 절대 문장이 끊기거나 애매하게 멈추면 안 "
+    "되며 명확한 마무리 문장(예: 이런 사람들에게 필수/추천이라는 식의 끝맺음)으로 끝나야 합니다. "
+    "TTS로 읽었을 때 반드시 target_duration_s 근처(±10%)에 들어오도록 압축하되, 압축하느라 마무리를 "
+    "생략하지 마세요 — 마무리 문장을 위한 여유를 항상 남겨두세요. "
     "3) 영상 내용에 어울리는 2줄짜리 상단 후킹 카피(hook_title: line1, line2, emphasis_word — "
     "강조할 단어/구, 노란색으로 표시됨)를 한국어로 작성. JSON으로만 답하세요."
 )
@@ -284,22 +291,40 @@ def align_sentence_timestamps(
 def synthesize_speech_pcm(text: str, voice: str = DEFAULT_TTS_VOICE, model: str = DEFAULT_TTS_MODEL) -> bytes:
     """Gemini TTS: returns raw PCM bytes (signed 16-bit little-endian, mono, 24kHz).
     Caller is responsible for wrapping into a WAV container (see tts_client.synthesize).
+
+    Same retry/fallback strategy as generate_json: transient 500/503s retry on the same model,
+    a 429 (daily quota exhausted) rotates to the next model in FALLBACK_TTS_MODELS.
     """
     import httpx
 
-    with httpx.Client(timeout=120.0) as client:
-        resp = client.post(
-            f"{_API_BASE}/v1beta/models/{model}:generateContent",
-            params={"key": _api_key()},
-            json={
-                "contents": [{"parts": [{"text": text}]}],
-                "generationConfig": {
-                    "responseModalities": ["AUDIO"],
-                    "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},
-                },
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        part = data["candidates"][0]["content"]["parts"][0]
-        return base64.b64decode(part["inlineData"]["data"])
+    models_to_try = [model] + [m for m in FALLBACK_TTS_MODELS if m != model]
+    last_exc: Exception | None = None
+    for candidate_model in models_to_try:
+        for attempt, backoff_s in enumerate([0.0, *TRANSIENT_RETRY_BACKOFFS_S]):
+            if backoff_s:
+                time.sleep(backoff_s)
+            try:
+                with httpx.Client(timeout=120.0) as client:
+                    resp = client.post(
+                        f"{_API_BASE}/v1beta/models/{candidate_model}:generateContent",
+                        params={"key": _api_key()},
+                        json={
+                            "contents": [{"parts": [{"text": text}]}],
+                            "generationConfig": {
+                                "responseModalities": ["AUDIO"],
+                                "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}},
+                            },
+                        },
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    part = data["candidates"][0]["content"]["parts"][0]
+                    return base64.b64decode(part["inlineData"]["data"])
+            except httpx.HTTPStatusError as exc:
+                last_exc = exc
+                if exc.response.status_code in (500, 503) and attempt < len(TRANSIENT_RETRY_BACKOFFS_S):
+                    continue
+                if exc.response.status_code == 429:
+                    break
+                raise
+    raise last_exc
