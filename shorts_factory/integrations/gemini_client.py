@@ -8,11 +8,15 @@ Plain HTTP via httpx (not a `google-generativeai`/`google-genai` SDK dependency)
 two operations needed here — resumable file upload and generateContent — are simple enough
 that a raw REST client avoids pinning to a specific SDK's fast-moving API surface.
 
-Model choice: `gemini-3.5-flash` for text/script generation (validated against this project's
-API key — `gemini-3.1-pro-preview` and `gemini-2.5-flash` both failed for this account: free-tier
-quota exhausted and model-retired-for-new-users respectively). `gemini-2.5-flash-preview-tts`
-for speech synthesis. Both are passed as parameters with these as defaults, not hardcoded only,
-since model availability shifts over time and per-account quota.
+Model choice: `gemini-flash-latest` for text/script generation. Each Gemini model has its own
+separate free-tier quota bucket (observed: 20 requests/day/model) — `gemini-3.5-flash`,
+`gemini-3.1-pro-preview`, and `gemini-2.5-flash` were all tried first and each failed for this
+account (daily quota exhausted, daily quota exhausted, and model-retired-for-new-users,
+respectively). `gemini-2.5-flash-preview-tts` for speech synthesis. All are passed as
+parameters with these as defaults, not hardcoded only, since model availability and per-account
+quota shift over time — if the default model's daily quota runs out mid-session, pass a
+different `model=` (e.g. `gemini-3-flash-preview`, `gemini-flash-lite-latest`) to keep working
+without waiting for a reset.
 """
 
 from __future__ import annotations
@@ -23,8 +27,11 @@ import time
 from pathlib import Path
 from typing import Any
 
-DEFAULT_TEXT_MODEL = "gemini-3.5-flash"
-DEFAULT_TTS_MODEL = "gemini-2.5-flash-preview-tts"
+DEFAULT_TEXT_MODEL = "gemini-flash-latest"
+DEFAULT_TTS_MODEL = "gemini-3.1-flash-tts-preview"
+# Same free-tier per-model daily quota issue as DEFAULT_TEXT_MODEL — tried in order if the
+# primary TTS model's daily quota is exhausted (each model has its own separate quota bucket).
+FALLBACK_TTS_MODELS = ["gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts"]
 DEFAULT_TTS_VOICE = "Kore"
 
 _API_BASE = "https://generativelanguage.googleapis.com"
@@ -101,6 +108,20 @@ def wait_for_file_active(file_uri: str, timeout_s: float = 60.0, poll_interval_s
     raise TimeoutError(f"Gemini file {file_uri} did not become ACTIVE within {timeout_s}s")
 
 
+TRANSIENT_RETRY_BACKOFFS_S = [3, 8, 20]
+
+# Each Gemini model has its own separate free-tier daily quota (observed: 20 requests/day/model
+# on this account). A single long multi-clip run can burn through one model's quota mid-session,
+# so generate_json rotates to the next model here on a 429 RESOURCE_EXHAUSTED rather than
+# failing outright — the caller's chosen `model` is tried first, then these in order.
+TEXT_MODEL_FALLBACK_CHAIN = [
+    "gemini-flash-latest",
+    "gemini-3-flash-preview",
+    "gemini-flash-lite-latest",
+    "gemini-3.5-flash-lite",
+]
+
+
 def generate_json(
     parts: list[dict[str, Any]],
     model: str = DEFAULT_TEXT_MODEL,
@@ -108,26 +129,67 @@ def generate_json(
 ) -> dict[str, Any]:
     """Call generateContent with responseMimeType=application/json and return the parsed dict.
     `parts` is the raw Gemini `contents[0].parts` list (text parts and/or `file_data` refs).
+
+    Transient server-side errors (503 Service Unavailable, 500) are retried automatically with
+    backoff on the SAME model. A 429 (RESOURCE_EXHAUSTED — daily quota) is different: retrying
+    the same model won't help, so instead this rotates to the next model in
+    TEXT_MODEL_FALLBACK_CHAIN (deduplicated, `model` tried first).
     """
     import httpx
     import json as _json
 
-    with httpx.Client(timeout=timeout_s) as client:
-        resp = client.post(
-            f"{_API_BASE}/v1beta/models/{model}:generateContent",
-            params={"key": _api_key()},
-            json={
-                "contents": [{"parts": parts}],
-                "generationConfig": {"responseMimeType": "application/json"},
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        candidates = data.get("candidates") or []
-        if not candidates:
-            raise RuntimeError(f"Gemini returned no candidates: {data}")
-        text = candidates[0]["content"]["parts"][0]["text"]
-        return _json.loads(text)
+    models_to_try = [model] + [m for m in TEXT_MODEL_FALLBACK_CHAIN if m != model]
+
+    last_exc: Exception | None = None
+    for candidate_model in models_to_try:
+        for attempt, backoff_s in enumerate([0.0, *TRANSIENT_RETRY_BACKOFFS_S]):
+            if backoff_s:
+                time.sleep(backoff_s)
+            try:
+                with httpx.Client(timeout=timeout_s) as client:
+                    resp = client.post(
+                        f"{_API_BASE}/v1beta/models/{candidate_model}:generateContent",
+                        params={"key": _api_key()},
+                        json={
+                            "contents": [{"parts": parts}],
+                            "generationConfig": {"responseMimeType": "application/json"},
+                        },
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    candidates = data.get("candidates") or []
+                    if not candidates:
+                        raise RuntimeError(f"Gemini returned no candidates: {data}")
+                    text = candidates[0]["content"]["parts"][0]["text"]
+                    return _parse_json_response(text)
+            except httpx.HTTPStatusError as exc:
+                last_exc = exc
+                if exc.response.status_code in (500, 503) and attempt < len(TRANSIENT_RETRY_BACKOFFS_S):
+                    continue  # retry same model
+                if exc.response.status_code == 429:
+                    break  # quota exhausted on this model — move to next model
+                raise
+    raise last_exc  # exhausted all retries across all fallback models
+
+
+def _parse_json_response(text: str) -> dict[str, Any]:
+    """Gemini's JSON-mode output is usually clean, but occasionally wraps the object in a
+    markdown code fence or appends trailing commentary despite responseMimeType being set.
+    Strip a fence if present, then decode only the first JSON value and ignore anything after
+    it, rather than failing outright on trailing bytes.
+    """
+    import json as _json
+
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.split("\n", 1)[1] if "\n" in stripped else stripped
+        if stripped.rstrip().endswith("```"):
+            stripped = stripped.rstrip()[:-3]
+        stripped = stripped.strip()
+
+    decoder = _json.JSONDecoder()
+    obj, _end_index = decoder.raw_decode(stripped)
+    return obj
 
 
 SCRIPT_SYSTEM_PROMPT = (
