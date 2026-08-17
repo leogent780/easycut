@@ -1,0 +1,17 @@
+# 예시 채널 설정 — 해외 뷰티/생활용품 더빙 채널(전략 2: viral_translate_dub).
+# 이 전략은 계정 자동 발굴을 하지 않음 — 대시보드의 "레퍼런스 영상 더빙" 폼에
+# 레퍼런스 영상 파일을 직접 올려서 그때그때 1건씩 더빙한다 (search_keywords는
+# 사용하지 않지만 ChannelConfig가 이 전략에도 필수로 요구하므로 자유 텍스트로 채워둠).
+
+source_strategy: viral_translate_dub
+format_template: dual_caption_translate
+niche_description: >
+  해외(중국/동남아 등) 소셜미디어의 조회수 검증된 뷰티/생활용품 소개 영상을
+  한국어로 더빙해서 재구성하는 채널. 레퍼런스 영상은 사용자가 직접 골라서
+  대시보드에 업로드.
+search_keywords:
+  - "해외 뷰티 리뷰"
+gcp_project_ref: shorts-factory-beauty-01
+needs_translation: true
+target_language: ko
+daily_publish_count: 1

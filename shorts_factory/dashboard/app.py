@@ -165,6 +165,82 @@ def run_now(name: str):
     return RedirectResponse("/", status_code=303)
 
 
+def _run_dub_reference_in_background(name: str, job_id: int, reference_path: Path, tone_hint: str | None) -> None:
+    from shorts_factory.pipeline import dub_caption_render, viral_translate_dub
+
+    with _get_session() as session:
+        job = session.get(Job, job_id)
+        channel = get_channel_by_name(session, name)
+        try:
+            font_cache_dir = _data_dir() / "cache"
+            font_path = dub_caption_render.ensure_pretendard_font(font_cache_dir)
+            output_path = _data_dir() / "scratch" / "dub_reference" / str(job_id) / "final.mp4"
+
+            result = viral_translate_dub.run_manual(
+                reference_video_path=reference_path,
+                hook_font_path=font_path,
+                output_path=output_path,
+                tone_hint=tone_hint,
+            )
+
+            hook_title_text = f"{result.hook_title.get('line1', '')} {result.hook_title.get('line2', '')}".strip()
+            clip = Clip(
+                job_id=job.id,
+                hook_title=hook_title_text or None,
+                format_template_used=channel.format_template if channel else None,
+                rendered_path=str(result.output_path),
+                upload_status=UploadStatus.PENDING_UPLOAD.value,
+            )
+            session.add(clip)
+            log_audit(
+                session, job, "dub_reference",
+                f"레퍼런스 더빙 완성 ({result.final_duration_s:.1f}초, crop={result.crop_applied_px}px)"
+                + (f" — {'; '.join(result.warnings)}" if result.warnings else ""),
+            )
+            finish_job(session, job, JobStatus.COMPLETED)
+        except Exception as exc:
+            log_audit(session, job, "dub_reference", f"레퍼런스 더빙 실패: {exc}", AuditLevel.ERROR)
+            finish_job(session, job, JobStatus.FAILED, error=str(exc))
+        finally:
+            reference_path.unlink(missing_ok=True)
+        session.commit()
+        _running_channels.discard(name)
+
+
+@app.post("/channels/{name}/dub-reference")
+async def dub_reference(name: str, tone_hint: str = Form(""), reference_video: UploadFile = None):
+    """Strategy 2 (viral_translate_dub): the user drops in ONE reference video and gets back
+    a Korean-dubbed short built the same way the manual samples in samples/ were — crop
+    detection, Gemini-authored script, TTS, gap-removal + speed-up, and reference-style
+    captions. Runs in the background (this can take a couple of minutes); the finished clip
+    shows up in 클립 이력 with 업로드 대기(재고) status, same as an automatic cycle's output —
+    from there it goes out via the normal daily upload flow, or the user can also just watch
+    for it and push it live sooner via manual review.
+    """
+    if name in _running_channels:
+        return RedirectResponse(f"/channels/{name}", status_code=303)
+
+    with _get_session() as session:
+        channel = get_channel_by_name(session, name)
+        job = create_job(session, channel)
+        job_id = job.id
+        session.commit()
+
+    scratch_dir = _data_dir() / "scratch" / "dub_reference" / str(job_id)
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+    reference_path = scratch_dir / (reference_video.filename or f"{uuid.uuid4()}.mp4")
+    with reference_path.open("wb") as f:
+        shutil.copyfileobj(reference_video.file, f)
+
+    _running_channels.add(name)
+    threading.Thread(
+        target=_run_dub_reference_in_background,
+        args=(name, job_id, reference_path, tone_hint.strip() or None),
+        daemon=True,
+    ).start()
+    return RedirectResponse(f"/channels/{name}", status_code=303)
+
+
 @app.get("/channels/{name}")
 def channel_detail(request: Request, name: str):
     with _get_session() as session:
@@ -198,7 +274,12 @@ def channel_detail(request: Request, name: str):
             for c in clips
         ]
         label, tone = STATUS_LABELS.get(channel.status, (channel.status, "muted"))
-        channel_row = {"name": channel.name, "status_label": label, "status_tone": tone}
+        channel_row = {
+            "name": channel.name,
+            "status_label": label,
+            "status_tone": tone,
+            "source_strategy": channel.source_strategy,
+        }
         current_format = channel.format_template
 
     format_options = [

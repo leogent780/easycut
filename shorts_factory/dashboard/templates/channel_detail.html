@@ -29,6 +29,28 @@
     </form>
   </section>
 
+  {% if channel.source_strategy == "viral_translate_dub" %}
+  <section class="panel">
+    <h2>레퍼런스 영상 더빙</h2>
+    <p class="hint">
+      해외/타 플랫폼 레퍼런스 영상 파일 하나를 올리면, 자막 위치를 자동 감지해서 크롭하고
+      Gemini가 영상을 직접 보고 대본을 쓴 뒤, TTS 더빙 + 상단 후킹 배너 + 짧은 자막까지
+      자동으로 만들어. 1~2분 정도 걸리고, 완성되면 아래 클립 이력에 "업로드 대기(재고)"로 나타나.
+    </p>
+    <form method="post" action="/channels/{{ channel.name }}/dub-reference" enctype="multipart/form-data" class="upload-form">
+      <label>
+        <span>레퍼런스 영상 파일</span>
+        <input type="file" name="reference_video" accept="video/mp4,video/*" required>
+      </label>
+      <label>
+        <span>말투 지침 (선택)</span>
+        <input type="text" name="tone_hint" placeholder="예: 정중체 대신 스토리텔링형 어미로">
+      </label>
+      <button class="btn primary" type="submit">더빙 생성 시작</button>
+    </form>
+  </section>
+  {% endif %}
+
   <section class="panel">
     <h2>직접 만든 영상 업로드</h2>
     <p class="hint">
