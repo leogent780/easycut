@@ -89,9 +89,10 @@ class CaptionChunk:
 
 
 # A trailing word this short at a chunk boundary is almost always a bare counter/determiner
-# (e.g. "두" in "두 배는") rather than a complete standalone thought — splitting it from the
-# word right after it (onto the next caption/scene) reads as a broken mid-word cut even though
-# they're technically separate whitespace-tokens. Pull the next word in before closing the chunk.
+# (e.g. "두" in "두 배는", "닭" in "닭 뼈부터") modifying whatever comes right after it, rather
+# than a complete standalone thought — splitting it onto the next caption/scene reads as a
+# broken mid-word cut even though they're technically separate whitespace-tokens. Defer it to
+# start the NEXT chunk instead of letting it end this one.
 SHORT_TRAILING_WORD_MAX_CHARS = 2
 
 
@@ -100,9 +101,12 @@ def chunk_sentence(text: str, min_chunk_chars: int = 6, max_chunk_chars: int = 1
     "짧게 짧게 한덩이씩" cadence observed in high-performing reference shorts (see
     samples/xhs_dish_brush_ko_dub_v2/README.md): greedily accumulate space-separated words
     until the running chunk reaches `min_chunk_chars`, then start a new chunk. A short leftover
-    tail merges into the previous chunk rather than standing alone. A chunk never closes right
-    after a bare 1-2 character trailing word (see SHORT_TRAILING_WORD_MAX_CHARS) — the next word
-    is pulled in first, as long as doing so still fits within `max_chunk_chars`.
+    tail merges into the previous chunk rather than standing alone. A chunk never closes on a
+    bare 1-2 character trailing word (see SHORT_TRAILING_WORD_MAX_CHARS) — that word is popped
+    back off and deferred to open the next chunk instead, so it stays attached to whatever
+    follows it rather than to whatever happened to precede it. This can make an individual
+    chunk read shorter than `min_chunk_chars`; that's an acceptable trade for never breaking a
+    word pair across two chunks/scenes.
     """
     words = text.split()
     if not words:
@@ -110,25 +114,21 @@ def chunk_sentence(text: str, min_chunk_chars: int = 6, max_chunk_chars: int = 1
     chunks: list[str] = []
     current: list[str] = []
     current_len = 0
-    i = 0
-    while i < len(words):
-        word = words[i]
+    for idx, word in enumerate(words):
         current.append(word)
         current_len += len(word) + 1
-        i += 1
         if current_len >= min_chunk_chars:
-            while (
-                len(word) <= SHORT_TRAILING_WORD_MAX_CHARS
-                and i < len(words)
-                and current_len + len(words[i]) + 1 <= max_chunk_chars
-            ):
-                word = words[i]
-                current.append(word)
-                current_len += len(word) + 1
-                i += 1
-            chunks.append(" ".join(current))
-            current = []
-            current_len = 0
+            is_last_word = idx == len(words) - 1
+            if len(word) <= SHORT_TRAILING_WORD_MAX_CHARS and not is_last_word and len(current) > 1:
+                current.pop()
+                current_len -= len(word) + 1
+                chunks.append(" ".join(current))
+                current = [word]
+                current_len = len(word) + 1
+            else:
+                chunks.append(" ".join(current))
+                current = []
+                current_len = 0
     if current:
         leftover = " ".join(current)
         if chunks and current_len < min_chunk_chars:

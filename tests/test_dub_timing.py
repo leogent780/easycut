@@ -83,11 +83,20 @@ def test_chunk_sentence_merges_short_leftover_tail():
 def test_chunk_sentence_does_not_strand_short_trailing_word():
     # "두" (a bare counter/determiner) must never be left dangling at the end of a chunk with
     # "배는" pushed into the next one — reported bug: captions showed "속도가 두" / "배는 빨라진다고"
-    chunks = dub_timing.chunk_sentence("이거 하나면 주방 작업 속도가 두 배는 빨라진다고")
-    assert " ".join(chunks) == "이거 하나면 주방 작업 속도가 두 배는 빨라진다고"
-    for chunk in chunks:
-        words = chunk.split()
-        assert not (len(words[-1]) <= dub_timing.SHORT_TRAILING_WORD_MAX_CHARS and chunk != chunks[-1])
+    text = "이거 하나면 주방 작업 속도가 두 배는 빨라진다고"
+    chunks = dub_timing.chunk_sentence(text)
+    assert " ".join(chunks) == text
+    assert any("두 배는" in c for c in chunks)
+
+
+def test_chunk_sentence_does_not_strand_short_word_even_near_max_chunk_chars():
+    # second reported instance of the same bug class: "닭 뼈부터" was split into "...닭" / "뼈부터..."
+    # because the chunk had already grown close to max_chunk_chars by the time "닭" was reached,
+    # so a naive "pull the next word in" fix couldn't fit it and gave up, stranding "닭" anyway.
+    text = "이게 말도 안 되는 게 닭 뼈부터 생선 뼈까지 순식간에 잘라버리는 건 기본이고"
+    chunks = dub_timing.chunk_sentence(text)
+    assert " ".join(chunks) == text
+    assert any("닭 뼈부터" in c for c in chunks)
 
 
 def test_layout_caption_chunks_allocates_proportional_time():
