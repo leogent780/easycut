@@ -133,9 +133,12 @@ def generate_json(
     Transient server-side errors (503 Service Unavailable, 500, and empirically also 400 — a
     video-attached request has been observed to spuriously 400 once and then succeed identically
     on retry, likely a Files API state hiccup rather than a genuinely malformed request) are
-    retried automatically with backoff on the SAME model. A 429 (RESOURCE_EXHAUSTED — daily
-    quota) is different: retrying the same model won't help, so instead this rotates to the next
-    model in TEXT_MODEL_FALLBACK_CHAIN (deduplicated, `model` tried first).
+    retried automatically with backoff on the SAME model first. If that model still won't
+    cooperate after exhausting those retries (or immediately for a 429 RESOURCE_EXHAUSTED daily
+    quota, where retrying the same model can never help), this rotates to the next model in
+    TEXT_MODEL_FALLBACK_CHAIN (deduplicated, `model` tried first) rather than giving up outright —
+    an extended outage on just the first model in the chain shouldn't fail the whole call when
+    other models are available.
     """
     import httpx
     import json as _json
@@ -168,8 +171,8 @@ def generate_json(
                 last_exc = exc
                 if exc.response.status_code in (400, 500, 503) and attempt < len(TRANSIENT_RETRY_BACKOFFS_S):
                     continue  # retry same model
-                if exc.response.status_code == 429:
-                    break  # quota exhausted on this model — move to next model
+                if exc.response.status_code in (400, 429, 500, 503):
+                    break  # gave up on this model (quota exhausted, or retries exhausted) — move to next model
                 raise
     raise last_exc  # exhausted all retries across all fallback models
 
@@ -369,7 +372,8 @@ def synthesize_speech_pcm(text: str, voice: str = DEFAULT_TTS_VOICE, model: str 
     Caller is responsible for wrapping into a WAV container (see tts_client.synthesize).
 
     Same retry/fallback strategy as generate_json: transient 400/500/503s retry on the same
-    model, a 429 (daily quota exhausted) rotates to the next model in FALLBACK_TTS_MODELS.
+    model first, then (like a 429 daily-quota-exhausted) rotate to the next model in
+    FALLBACK_TTS_MODELS rather than giving up if this model keeps failing.
     """
     import httpx
 
@@ -400,7 +404,7 @@ def synthesize_speech_pcm(text: str, voice: str = DEFAULT_TTS_VOICE, model: str 
                 last_exc = exc
                 if exc.response.status_code in (400, 500, 503) and attempt < len(TRANSIENT_RETRY_BACKOFFS_S):
                     continue
-                if exc.response.status_code == 429:
-                    break
+                if exc.response.status_code in (400, 429, 500, 503):
+                    break  # gave up on this model — move to next model
                 raise
     raise last_exc
