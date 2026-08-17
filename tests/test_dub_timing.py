@@ -80,6 +80,16 @@ def test_chunk_sentence_merges_short_leftover_tail():
     assert chunks == ["가나다라 마바사"]
 
 
+def test_chunk_sentence_does_not_strand_short_trailing_word():
+    # "두" (a bare counter/determiner) must never be left dangling at the end of a chunk with
+    # "배는" pushed into the next one — reported bug: captions showed "속도가 두" / "배는 빨라진다고"
+    chunks = dub_timing.chunk_sentence("이거 하나면 주방 작업 속도가 두 배는 빨라진다고")
+    assert " ".join(chunks) == "이거 하나면 주방 작업 속도가 두 배는 빨라진다고"
+    for chunk in chunks:
+        words = chunk.split()
+        assert not (len(words[-1]) <= dub_timing.SHORT_TRAILING_WORD_MAX_CHARS and chunk != chunks[-1])
+
+
 def test_layout_caption_chunks_allocates_proportional_time():
     sentences = ["가나다라 마바사아자차"]  # one sentence, will split into 2 chunks by length
     windows = [(0.0, 10.0)]
