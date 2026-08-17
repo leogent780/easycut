@@ -1,15 +1,23 @@
 """TTS plugin interface: synthesize Korean narration audio via a swappable provider.
 
-Two providers implemented:
+Three providers implemented:
 - "gemini": uses the same GEMINI_API_KEY already required for gemini_client.py's script
   generation, so no extra account signup is needed to get end-to-end dubbing working.
-- "elevenlabs": the user's preferred provider. NOTE — `api.elevenlabs.io` is blocked by this
-  dev sandbox's network egress policy, so this implementation is written to the documented
-  ElevenLabs REST API shape but has NOT been network-verified from this environment. It should
-  work as-is on the user's own machine (no such block there); if it doesn't, check that
-  ELEVENLABS_API_KEY is set and that the voice_id is valid for the account.
+- "elevenlabs": NOTE — `api.elevenlabs.io` is blocked by this dev sandbox's network egress
+  policy, so this implementation is written to the documented ElevenLabs REST API shape but has
+  NOT been network-verified from this environment. It should work as-is on the user's own
+  machine (no such block there); if it doesn't, check that ELEVENLABS_API_KEY is set and that
+  the voice_id is valid for the account.
+- "typecast": the user's actual preferred provider going forward. NOTE — `api.typecast.ai` is
+  ALSO blocked by this sandbox's egress policy (confirmed: both WebFetch and a direct curl
+  through the proxy were rejected), so — same caveat as elevenlabs — this has NOT been
+  network-verified from this environment, even though the user supplied a real API key/voice_id
+  to test with. Written to the documented Typecast v1 REST API shape (POST
+  /v1/text-to-speech, X-API-KEY header, voice_id + model + prompt.emotion_preset body). Test on
+  the user's own machine; if the response shape differs (e.g. JSON with a download URL instead
+  of raw audio bytes), adjust `_synthesize_typecast` accordingly.
 
-Both providers return a path to a finished .wav file (16-bit PCM), since downstream ffmpeg
+All three providers return a path to a finished .wav file (16-bit PCM), since downstream ffmpeg
 compositing (pipeline/viral_translate_dub.py) expects a plain audio file, not raw bytes.
 """
 
@@ -19,7 +27,7 @@ import os
 import subprocess
 from pathlib import Path
 
-DEFAULT_PROVIDER = "gemini"
+DEFAULT_PROVIDER = "typecast"
 
 
 def synthesize(text: str, output_path: str | Path, provider: str = DEFAULT_PROVIDER, **kwargs) -> Path:
@@ -29,8 +37,10 @@ def synthesize(text: str, output_path: str | Path, provider: str = DEFAULT_PROVI
         _synthesize_gemini(text, output_path, **kwargs)
     elif provider == "elevenlabs":
         _synthesize_elevenlabs(text, output_path, **kwargs)
+    elif provider == "typecast":
+        _synthesize_typecast(text, output_path, **kwargs)
     else:
-        raise ValueError(f"unknown TTS provider: {provider!r} (expected 'gemini' or 'elevenlabs')")
+        raise ValueError(f"unknown TTS provider: {provider!r} (expected 'gemini', 'elevenlabs', or 'typecast')")
     return output_path
 
 
@@ -94,3 +104,54 @@ def _synthesize_elevenlabs(
             raise RuntimeError(f"ffmpeg failed converting ElevenLabs mp3 to wav: {result.stderr[-2000:]}")
     finally:
         mp3_path.unlink(missing_ok=True)
+
+
+_TYPECAST_DEFAULT_MODEL = "ssfm-v21"
+_TYPECAST_DEFAULT_EMOTION_PRESET = "normal"
+
+
+def _synthesize_typecast(
+    text: str,
+    output_path: Path,
+    voice_id: str | None = None,
+    model: str = _TYPECAST_DEFAULT_MODEL,
+    emotion_preset: str = _TYPECAST_DEFAULT_EMOTION_PRESET,
+) -> None:
+    import httpx
+
+    api_key = os.environ.get("TYPECAST_API_KEY")
+    if not api_key:
+        raise RuntimeError("TYPECAST_API_KEY is not set (see .env.example)")
+    voice_id = voice_id or os.environ.get("TYPECAST_VOICE_ID")
+    if not voice_id:
+        raise RuntimeError("voice_id not provided and TYPECAST_VOICE_ID is not set")
+
+    with httpx.Client(timeout=120.0) as client:
+        resp = client.post(
+            "https://api.typecast.ai/v1/text-to-speech",
+            headers={"X-API-KEY": api_key, "Content-Type": "application/json"},
+            json={
+                "text": text,
+                "voice_id": voice_id,
+                "model": model,
+                "prompt": {"emotion_preset": emotion_preset},
+                "output": {"audio_format": "wav"},
+            },
+        )
+        resp.raise_for_status()
+        audio_bytes = resp.content
+
+    # Typecast's documented v1 endpoint returns the audio bytes directly (not a JSON envelope
+    # with a download URL) — if that turns out wrong when actually tested against the live API,
+    # this is the spot to change (e.g. resp.json()["audio_url"] -> re-fetch that URL).
+    src_path = output_path.with_suffix(".src")
+    src_path.write_bytes(audio_bytes)
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-i", str(src_path), str(output_path)],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"ffmpeg failed converting Typecast audio to wav: {result.stderr[-2000:]}")
+    finally:
+        src_path.unlink(missing_ok=True)

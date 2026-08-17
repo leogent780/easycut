@@ -166,6 +166,7 @@ def run_now(name: str):
 
 
 def _run_dub_reference_in_background(name: str, job_id: int, reference_path: Path, tone_hint: str | None) -> None:
+    from shorts_factory.integrations import tts_client
     from shorts_factory.pipeline import dub_caption_render, viral_translate_dub
 
     with _get_session() as session:
@@ -175,12 +176,14 @@ def _run_dub_reference_in_background(name: str, job_id: int, reference_path: Pat
             font_cache_dir = _data_dir() / "cache"
             pretendard_path = dub_caption_render.ensure_pretendard_font(font_cache_dir)
             output_path = _data_dir() / "scratch" / "dub_reference" / str(job_id) / "final.mp4"
+            tts_provider = os.environ.get("TTS_PROVIDER") or tts_client.DEFAULT_PROVIDER
 
             result = viral_translate_dub.run_manual(
                 reference_video_path=reference_path,
                 pretendard_font_path=pretendard_path,
                 output_path=output_path,
                 tone_hint=tone_hint,
+                tts_provider=tts_provider,
             )
 
             hook_title_text = f"{result.hook_title.get('line1', '')} {result.hook_title.get('line2', '')}".strip()
