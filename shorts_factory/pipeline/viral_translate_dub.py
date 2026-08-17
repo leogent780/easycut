@@ -156,6 +156,94 @@ class _SegmentDubResult:
     warnings: list[str]
 
 
+def _preview_segment_without_tts(
+    segment_video_path: Path,
+    crop_filter: str,
+    source_duration: float,
+    script_ko: list[str],
+    hook_title: dict,
+    transcript_original: list[str],
+    pretendard_font_path: str | Path,
+    dohyeon_font_path: str | Path,
+    scratch_dir: Path,
+    chromium_executable_path: str | None,
+    add_banner: bool,
+) -> "_SegmentDubResult":
+    """skip_tts path for _dub_segment: crop/scale the clip, keep its original audio, and lay
+    captions out proportional to sentence length across the clip's own real duration (no TTS
+    timing available to align to).
+    """
+    base_composite = scratch_dir / "base_composite.mp4"
+    if add_banner:
+        banner_path = scratch_dir / "banner.png"
+        dub_caption_render.render_hook_banner(
+            hook_title["line1"], hook_title["line2"], hook_title.get("emphasis_word"),
+            pretendard_font_path, banner_path, chromium_executable_path=chromium_executable_path,
+        )
+        _run_ffmpeg([
+            "-i", str(segment_video_path), "-i", str(banner_path),
+            "-filter_complex", f"[0:v]{crop_filter}[bg];[bg][1:v]overlay=0:0[outv]",
+            "-map", "[outv]", "-map", "0:a",
+            "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+            str(base_composite),
+        ])
+    else:
+        _run_ffmpeg([
+            "-i", str(segment_video_path),
+            "-filter_complex", f"[0:v]{crop_filter}[outv]",
+            "-map", "[outv]", "-map", "0:a",
+            "-c:v", "libx264", "-crf", "18", "-preset", "medium", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+            str(base_composite),
+        ])
+
+    total_chars = sum(len(s) for s in script_ko) or 1
+    sentence_windows: list[tuple[float, float]] = []
+    cursor = 0.0
+    for s in script_ko:
+        share = (len(s) / total_chars) * source_duration
+        sentence_windows.append((cursor, cursor + share))
+        cursor += share
+
+    chunks = dub_timing.layout_caption_chunks(script_ko, sentence_windows)
+    overlay_inputs = []
+    filter_parts = []
+    prev_label = "0:v"
+    for i, chunk in enumerate(chunks, start=1):
+        chunk_png = scratch_dir / f"chunk_{i:03d}.png"
+        dub_caption_render.render_caption_chunk(
+            chunk.text, dohyeon_font_path, chunk_png, chromium_executable_path=chromium_executable_path
+        )
+        overlay_inputs += ["-i", str(chunk_png)]
+        out_label = f"v{i}"
+        filter_parts.append(
+            f"[{prev_label}][{i}:v]overlay=0:0:enable='between(t,{chunk.start_s:.3f},{chunk.end_s:.3f})'[{out_label}]"
+        )
+        prev_label = out_label
+
+    captioned_path = scratch_dir / "captioned.mp4"
+    if filter_parts:
+        _run_ffmpeg([
+            "-i", str(base_composite), *overlay_inputs,
+            "-filter_complex", "; ".join(filter_parts),
+            "-map", f"[{prev_label}]", "-map", "0:a",
+            "-c:v", "libx264", "-crf", "19", "-preset", "medium", "-pix_fmt", "yuv420p",
+            "-c:a", "copy", "-movflags", "+faststart",
+            str(captioned_path),
+        ])
+    else:
+        shutil.copy2(base_composite, captioned_path)
+
+    return _SegmentDubResult(
+        captioned_path=captioned_path,
+        hook_title=hook_title,
+        script_ko=script_ko,
+        transcript_original=transcript_original,
+        warnings=["TTS 생략 미리보기: 대본 길이 비례로 자막 배치 (실제 TTS 타이밍 아님)"],
+    )
+
+
 def _dub_segment(
     segment_video_path: Path,
     keep_height_px: int,
@@ -167,12 +255,21 @@ def _dub_segment(
     tts_provider: str,
     chromium_executable_path: str | None,
     add_banner: bool,
+    skip_tts: bool = False,
 ) -> _SegmentDubResult:
     """Run the full script->TTS->gap-removal->caption pipeline on ONE video clip (either the
     whole reference video, for a single-topic run, or one product's sub-clip, for a
     multi-segment run). `add_banner` controls whether the hook banner is burned in here
     (single-segment runs) or left for the caller to composite once across a concatenated
     multi-segment output.
+
+    `skip_tts=True` produces a captions-only preview: no narration audio is generated (useful
+    when the TTS provider's quota is exhausted but the script/segment-sync logic still needs
+    QA), the ORIGINAL source audio is kept as-is, and captions are laid out proportional to each
+    sentence's character count across the clip's own real duration instead of TTS-timing-based
+    alignment. This is an approximation for quick visual QA, not a substitute for the real
+    TTS-timed pass — no gap removal or speed-up is applied either, since both depend on real
+    narration timing.
     """
     warnings: list[str] = []
     source_w, source_h, source_duration = _probe(segment_video_path)
@@ -184,6 +281,13 @@ def _dub_segment(
     script_ko: list[str] = script_result["script_ko"]
     hook_title: dict = script_result["hook_title"]
     transcript_original: list[str] = script_result.get("transcript_original", [])
+
+    if skip_tts:
+        return _preview_segment_without_tts(
+            segment_video_path, crop_filter, source_duration, script_ko, hook_title,
+            transcript_original, pretendard_font_path, dohyeon_font_path, scratch_dir,
+            chromium_executable_path, add_banner,
+        )
 
     narration_path = scratch_dir / "narration.wav"
     tts_client.synthesize(" ".join(script_ko), narration_path, provider=tts_provider)
@@ -323,8 +427,12 @@ def run_manual(
     tts_provider: str = tts_client.DEFAULT_PROVIDER,
     scratch_dir: str | Path | None = None,
     chromium_executable_path: str | None = None,
+    skip_tts: bool = False,
 ) -> DubResult:
-    """Single-topic reference video -> one Korean-dubbed Shorts clip."""
+    """Single-topic reference video -> one Korean-dubbed Shorts clip.
+
+    `skip_tts=True` produces a captions-only preview (see `_dub_segment`'s skip_tts docs).
+    """
     reference_video_path = Path(reference_video_path)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -339,7 +447,7 @@ def run_manual(
         result = _dub_segment(
             reference_video_path, keep_height_px, pretendard_font_path, dohyeon_font_path,
             scratch_dir, tone_hint, speed_factor, tts_provider, chromium_executable_path,
-            add_banner=True,
+            add_banner=True, skip_tts=skip_tts,
         )
         final_duration = _audio_duration(result.captioned_path)
         shutil.copy2(result.captioned_path, output_path)
@@ -398,6 +506,7 @@ def run_manual_multi_segment(
     tts_provider: str = tts_client.DEFAULT_PROVIDER,
     scratch_dir: str | Path | None = None,
     chromium_executable_path: str | None = None,
+    skip_tts: bool = False,
 ) -> DubResult:
     """Multi-product reference video -> one Korean-dubbed Shorts clip covering ALL products,
     with each product's narration generated, TTS'd, and gap-removed independently against its
@@ -408,6 +517,9 @@ def run_manual_multi_segment(
     the whole multi-product clip has no mechanism to guarantee sentence N's audio lines up with
     product N's footage, since the LLM's Korean phrasing tempo and the original footage's edit
     tempo are paced completely independently of each other.
+
+    `skip_tts=True` produces a captions-only preview (see `_dub_segment`'s skip_tts docs) — for
+    QA'ing the per-product script/segment-sync logic while a TTS provider's quota is exhausted.
     """
     reference_video_path = Path(reference_video_path)
     output_path = Path(output_path)
@@ -460,7 +572,7 @@ def run_manual_multi_segment(
             seg_result = _dub_segment(
                 seg_raw, keep_height_px, pretendard_font_path, dohyeon_font_path, seg_scratch,
                 seg_tone_hint, speed_factor, tts_provider, chromium_executable_path,
-                add_banner=False,
+                add_banner=False, skip_tts=skip_tts,
             )
             seg_captioned_paths.append(seg_result.captioned_path)
             all_script_ko.extend(seg_result.script_ko)
