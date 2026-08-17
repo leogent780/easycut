@@ -174,13 +174,11 @@ def _run_dub_reference_in_background(name: str, job_id: int, reference_path: Pat
         try:
             font_cache_dir = _data_dir() / "cache"
             pretendard_path = dub_caption_render.ensure_pretendard_font(font_cache_dir)
-            dohyeon_path = dub_caption_render.ensure_dohyeon_font(font_cache_dir)
             output_path = _data_dir() / "scratch" / "dub_reference" / str(job_id) / "final.mp4"
 
             result = viral_translate_dub.run_manual(
                 reference_video_path=reference_path,
                 pretendard_font_path=pretendard_path,
-                dohyeon_font_path=dohyeon_path,
                 output_path=output_path,
                 tone_hint=tone_hint,
             )

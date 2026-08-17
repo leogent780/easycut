@@ -164,7 +164,6 @@ def _preview_segment_without_tts(
     hook_title: dict,
     transcript_original: list[str],
     pretendard_font_path: str | Path,
-    dohyeon_font_path: str | Path,
     scratch_dir: Path,
     chromium_executable_path: str | None,
     add_banner: bool,
@@ -213,7 +212,7 @@ def _preview_segment_without_tts(
     for i, chunk in enumerate(chunks, start=1):
         chunk_png = scratch_dir / f"chunk_{i:03d}.png"
         dub_caption_render.render_caption_chunk(
-            chunk.text, dohyeon_font_path, chunk_png, chromium_executable_path=chromium_executable_path
+            chunk.text, pretendard_font_path, chunk_png, chromium_executable_path=chromium_executable_path
         )
         overlay_inputs += ["-i", str(chunk_png)]
         out_label = f"v{i}"
@@ -248,7 +247,6 @@ def _dub_segment(
     segment_video_path: Path,
     keep_height_px: int,
     pretendard_font_path: str | Path,
-    dohyeon_font_path: str | Path,
     scratch_dir: Path,
     tone_hint: str | None,
     speed_factor: float,
@@ -285,7 +283,7 @@ def _dub_segment(
     if skip_tts:
         return _preview_segment_without_tts(
             segment_video_path, crop_filter, source_duration, script_ko, hook_title,
-            transcript_original, pretendard_font_path, dohyeon_font_path, scratch_dir,
+            transcript_original, pretendard_font_path, scratch_dir,
             chromium_executable_path, add_banner,
         )
 
@@ -386,7 +384,7 @@ def _dub_segment(
     for i, chunk in enumerate(chunks, start=1):
         chunk_png = scratch_dir / f"chunk_{i:03d}.png"
         dub_caption_render.render_caption_chunk(
-            chunk.text, dohyeon_font_path, chunk_png, chromium_executable_path=chromium_executable_path
+            chunk.text, pretendard_font_path, chunk_png, chromium_executable_path=chromium_executable_path
         )
         overlay_inputs += ["-i", str(chunk_png)]
         out_label = f"v{i}"
@@ -420,7 +418,6 @@ def _dub_segment(
 def run_manual(
     reference_video_path: str | Path,
     pretendard_font_path: str | Path,
-    dohyeon_font_path: str | Path,
     output_path: str | Path,
     tone_hint: str | None = None,
     speed_factor: float = DEFAULT_SPEED_FACTOR,
@@ -445,7 +442,7 @@ def run_manual(
     try:
         keep_height_px = subtitle_crop.detect_bottom_crop_px(reference_video_path)
         result = _dub_segment(
-            reference_video_path, keep_height_px, pretendard_font_path, dohyeon_font_path,
+            reference_video_path, keep_height_px, pretendard_font_path,
             scratch_dir, tone_hint, speed_factor, tts_provider, chromium_executable_path,
             add_banner=True, skip_tts=skip_tts,
         )
@@ -499,7 +496,6 @@ def _segment_role(index: int, count: int) -> str:
 def run_manual_multi_segment(
     reference_video_path: str | Path,
     pretendard_font_path: str | Path,
-    dohyeon_font_path: str | Path,
     output_path: str | Path,
     tone_hint: str | None = None,
     speed_factor: float = DEFAULT_SPEED_FACTOR,
@@ -570,7 +566,7 @@ def run_manual_multi_segment(
             seg_tone_hint = (tone_hint + " " if tone_hint else "") + role_hint
 
             seg_result = _dub_segment(
-                seg_raw, keep_height_px, pretendard_font_path, dohyeon_font_path, seg_scratch,
+                seg_raw, keep_height_px, pretendard_font_path, seg_scratch,
                 seg_tone_hint, speed_factor, tts_provider, chromium_executable_path,
                 add_banner=False, skip_tts=skip_tts,
             )

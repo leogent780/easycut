@@ -1,15 +1,15 @@
-"""Playwright-rendered PNGs for the viral_translate_dub strategy's two overlay layers:
+"""Playwright-rendered PNGs for the viral_translate_dub strategy's two overlay layers, both
+using the SAME typeface (Pretendard Black) per explicit user request — captions previously used
+a separate font (Do Hyeon) but the user asked to just match the top hook-banner font instead:
 
 1. Hook banner — fixed 1080x353px, #000000 background, Pretendard Black, white default text
    with one emphasized word/phrase in #FEF501, real typed text (not AI-generated letterforms
-   in an image). Exact spec the user gave when this was first validated by hand. Font size is
-   auto-fit per render (not a fixed constant) so the banner text always fills close to the full
-   banner width regardless of how long the hook title happens to be — matching a real reference
-   screenshot the user provided where the copy visually fills almost the entire frame.
-2. Short caption chunks — Do Hyeon (a bold, vertically-elongated Korean display font used
-   throughout Korean broadcast/variety-show captions), white fill with a thin black outline,
-   sized/positioned to match a detailed style spec the user gave (see module-level constants
-   below) after finding the earlier Pretendard-Black-based captions too thick/UI-like.
+   in an image). Font size is auto-fit per render (not a fixed constant) so the banner text
+   always fills close to the full banner width regardless of how long the hook title happens to
+   be — matching a real reference screenshot the user provided where the copy visually fills
+   almost the entire frame.
+2. Short caption chunks — same Pretendard Black typeface, white fill with a thin black outline,
+   sized/positioned per a style spec the user gave (see module-level constants below).
 
 Both reuse the same Playwright-screenshot-a-transparent-page technique as
 pipeline/overlay_render.py rather than sharing its renderer directly, because these two overlays
@@ -34,8 +34,7 @@ BANNER_MIN_FONT_SIZE = 40
 BANNER_MAX_FONT_SIZE = 120
 
 # Caption chunk style: white fill / thin black outline, tight letter-spacing, sized so the
-# outline reads as a deliberate thin stroke (~6-7% of font-size) rather than a thick UI-style
-# border — per a detailed spec the user gave describing 2000s~2010s Korean variety-show captions.
+# outline reads as a deliberate thin stroke rather than a thick UI-style border.
 CAPTION_FONT_SIZE = 76
 CAPTION_STROKE_RATIO = 0.065
 CAPTION_LETTER_SPACING_PX = -2
@@ -45,11 +44,6 @@ _FONT_CSS = """
   font-family: "Pretendard Black";
   src: url("file://{pretendard_path}") format("opentype");
   font-weight: 900;
-}}
-@font-face {{
-  font-family: "Do Hyeon";
-  src: url("file://{dohyeon_path}") format("truetype");
-  font-weight: 400;
 }}
 """
 
@@ -83,7 +77,7 @@ html, body {{ width: {width}px; height: {height}px; background: transparent; }}
   gap: 10px; padding: 0 60px;
 }}
 .capbox .line {{
-  font-family: "Do Hyeon", sans-serif; font-weight: 400; font-size: {font_size}px; line-height: 1.3;
+  font-family: "Pretendard Black", sans-serif; font-weight: 900; font-size: {font_size}px; line-height: 1.3;
   letter-spacing: {letter_spacing}px;
   color: #ffffff; text-align: center; white-space: nowrap;
   -webkit-text-stroke: {stroke_width}px #000000; paint-order: stroke fill;
@@ -98,22 +92,14 @@ PRETENDARD_BLACK_URL = (
     "https://raw.githubusercontent.com/orioncactus/pretendard/main/packages/pretendard/"
     "dist/public/static/Pretendard-Black.otf"
 )
-# Do Hyeon (도현체) — free Google Font, the de facto standard Korean variety-show caption
-# typeface: bold, vertically-elongated, tight-set. Served from Google's static font CDN.
-DOHYEON_URL = "https://fonts.gstatic.com/s/dohyeon/v21/TwMN-I8CRRU2zM86HFE3.ttf"
 
 
 def ensure_pretendard_font(cache_dir: str | Path) -> Path:
-    """Download+cache the exact webfont file the banner spec requires (real typed text, not
-    an AI-generated image of letterforms). `raw.githubusercontent.com` is reachable even from
-    network-restricted environments where e.g. jsdelivr's CDN is blocked.
+    """Download+cache the exact webfont file the banner (and now caption) spec requires (real
+    typed text, not an AI-generated image of letterforms). `raw.githubusercontent.com` is
+    reachable even from network-restricted environments where e.g. jsdelivr's CDN is blocked.
     """
     return _ensure_font(cache_dir, "Pretendard-Black.otf", PRETENDARD_BLACK_URL)
-
-
-def ensure_dohyeon_font(cache_dir: str | Path) -> Path:
-    """Download+cache Do Hyeon for the short caption chunks."""
-    return _ensure_font(cache_dir, "DoHyeon-Regular.ttf", DOHYEON_URL)
 
 
 def _ensure_font(cache_dir: str | Path, filename: str, url: str) -> Path:
@@ -156,10 +142,7 @@ def render_hook_banner(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     line1_html = _wrap_emphasis(line1, emphasis_word)
     line2_html = _wrap_emphasis(line2, emphasis_word)
-    font_css = _FONT_CSS.format(
-        pretendard_path=Path(pretendard_font_path).resolve(),
-        dohyeon_path=Path(pretendard_font_path).resolve(),  # unused by the banner template
-    )
+    font_css = _FONT_CSS.format(pretendard_path=Path(pretendard_font_path).resolve())
 
     with sync_playwright() as p:
         launch_kwargs = {"executable_path": chromium_executable_path} if chromium_executable_path else {}
@@ -196,20 +179,17 @@ def render_hook_banner(
 
 def render_caption_chunk(
     text: str,
-    dohyeon_font_path: str | Path,
+    pretendard_font_path: str | Path,
     output_path: str | Path,
     caption_top: int = DEFAULT_CAPTION_TOP,
     chromium_executable_path: str | None = None,
 ) -> Path:
-    """Render one short caption chunk as a full-canvas transparent PNG (Do Hyeon, white fill /
-    thin black outline), positioned at `caption_top`.
+    """Render one short caption chunk as a full-canvas transparent PNG (Pretendard Black, white
+    fill / thin black outline — same typeface as the hook banner), positioned at `caption_top`.
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    font_css = _FONT_CSS.format(
-        pretendard_path=Path(dohyeon_font_path).resolve(),  # unused by the caption template
-        dohyeon_path=Path(dohyeon_font_path).resolve(),
-    )
+    font_css = _FONT_CSS.format(pretendard_path=Path(pretendard_font_path).resolve())
     stroke_width = round(CAPTION_FONT_SIZE * CAPTION_STROKE_RATIO, 1)
     html = _CAPTION_HTML_TEMPLATE.format(
         font_css=font_css,
