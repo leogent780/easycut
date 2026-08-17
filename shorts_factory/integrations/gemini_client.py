@@ -165,6 +165,35 @@ def generate_script_from_video(
     return generate_json(parts, model=model)
 
 
+SEGMENT_SYSTEM_PROMPT = (
+    "당신은 쇼츠 영상 편집자입니다. 이 영상은 여러 개의 제품/꿀템을 순서대로 소개하는 "
+    "컴필레이션 영상입니다. 영상을 실제로 보고, 서로 다른 제품을 소개하는 구간을 구분해서 "
+    "각 구간의 시작 시각과 끝 시각(초, 소수점 포함), 그 제품을 한 줄로 요약한 라벨을 "
+    "알려주세요. 한국 유튜브 쇼츠는 각 영상이 1분 이내여야 하므로, 이 구분은 나중에 영상을 "
+    "제품별로 잘라서 각각 별도의 쇼츠로 만드는 데 쓰입니다. 인트로/아웃트로처럼 특정 제품과 "
+    "무관한 구간이 있다면 segments에 포함하지 마세요."
+)
+
+
+def detect_product_segments(video_file_uri: str, model: str = DEFAULT_TEXT_MODEL) -> list[dict[str, Any]]:
+    """Ask Gemini to watch a multi-product compilation reference video and split it into
+    per-product time segments, each destined to become its own separate Shorts clip (Korean
+    YouTube Shorts requires <=60s per video, and simply trimming a multi-product video to fit
+    would cut mid-product — the actual requirement is one clip per product).
+
+    Returns a list of {"label": str, "start": float, "end": float} dicts, in video order.
+    """
+    parts = [
+        {"file_data": {"mime_type": "video/mp4", "file_uri": video_file_uri}},
+        {
+            "text": SEGMENT_SYSTEM_PROMPT
+            + '\n\nJSON 형식: {"segments": [{"label": "...", "start": 0.0, "end": 0.0}, ...]}'
+        },
+    ]
+    result = generate_json(parts, model=model)
+    return result["segments"]
+
+
 def align_sentence_timestamps(
     audio_file_uri: str,
     sentences: list[str],
